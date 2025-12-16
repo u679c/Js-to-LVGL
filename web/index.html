@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LVGL Text/Button Demo</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #0b1d36;
+      color: #e8f1ff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    .card {
+      padding: 24px 28px;
+      border-radius: 12px;
+      background: #11243f;
+      box-shadow: 0 12px 30px rgba(0,0,0,0.25);
+      text-align: center;
+      min-width: 260px;
+    }
+    h1 {
+      margin: 0 0 12px;
+      font-size: 20px;
+      color: #8ab4ff;
+    }
+    #display {
+      margin: 0 0 20px;
+      font-size: 18px;
+    }
+    button {
+      padding: 10px 16px;
+      border: none;
+      border-radius: 10px;
+      background: #3c7df9;
+      color: #fff;
+      font-weight: 700;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1 id="title">Status Panel</h1>
+    <p id="display">Current State: Waiting</p>
+    <button id="action-btn">Toggle State(test)</button>
+  </div>
+  <script>
+    const display = document.getElementById('display');
+    const btn = document.getElementById('action-btn');
+    const messages = ["Current State: Waiting", "Current State: Running", "Current State: Done"];
+    let idx = 0;
+    btn.addEventListener('click', () => {
+      idx = (idx + 1) % messages.length;
+      display.textContent = messages[idx];
+    });
+  </script>
+</body>
+</html>
