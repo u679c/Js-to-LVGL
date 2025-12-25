@@ -2,7 +2,7 @@
 
 Usage:
   python main.py           # generate LVGL sources (no build)
-  python main.py --build   # generate and build (requires cmake/git/gcc/pkg-config/libsdl2-dev on Linux)
+  python main.py --build   # generate and build (requires cmake/git/gcc on Linux)
 """
 from __future__ import annotations
 
@@ -78,19 +78,19 @@ def write_main_c() -> None:
       r'''
       #include "lvgl.h"
       #include "lv_conf.h"
-      #ifndef SDL_MAIN_HANDLED
-      #define SDL_MAIN_HANDLED
-      #endif
-      #include <SDL2/SDL.h>
-      #include "sdl/sdl.h"
+      #include "lv_drv_conf.h"
+      #include "display/fbdev.h"
+      #include "indev/evdev.h"
       #include "generated/ui_app.h"
+      #include <unistd.h>
 
-      #define SCREEN_W 720
-      #define SCREEN_H 1280
+      #define SCREEN_W 1024
+      #define SCREEN_H 600
 
       static void hal_init(void) {
         lv_init();
-        sdl_init();
+        fbdev_init();
+        evdev_init();
 
         static lv_color_t buf1[SCREEN_W * 80];
         static lv_color_t buf2[SCREEN_W * 80];
@@ -101,14 +101,23 @@ def write_main_c() -> None:
         lv_disp_drv_init(&disp_drv);
         disp_drv.hor_res = SCREEN_W;
         disp_drv.ver_res = SCREEN_H;
-        disp_drv.flush_cb = sdl_display_flush;
+        disp_drv.flush_cb = fbdev_flush;
         disp_drv.draw_buf = &draw_buf;
+#ifdef DISP_SW_ROTATE
+        disp_drv.sw_rotate = DISP_SW_ROTATE;
+#endif
+#ifdef DISP_ROTATION
+        disp_drv.rotated = DISP_ROTATION;
+#endif
+#ifdef DISP_FULL_REFRESH
+        disp_drv.full_refresh = DISP_FULL_REFRESH;
+#endif
         lv_disp_drv_register(&disp_drv);
 
         static lv_indev_drv_t indev_drv;
         lv_indev_drv_init(&indev_drv);
         indev_drv.type = LV_INDEV_TYPE_POINTER;
-        indev_drv.read_cb = sdl_mouse_read;
+        indev_drv.read_cb = evdev_read;
         lv_indev_drv_register(&indev_drv);
       }
 
@@ -117,7 +126,7 @@ def write_main_c() -> None:
         ui_build();
         while (1) {
           lv_timer_handler();
-          SDL_Delay(5);
+          usleep(5000);
         }
         return 0;
       }
@@ -134,11 +143,16 @@ def write_lv_drv_conf() -> None:
       """
       #ifndef LV_DRV_CONF_H
       #define LV_DRV_CONF_H
-      #define SDL_HOR_RES 720
-      #define SDL_VER_RES 1280
-      #define USE_SDL 1
-      #define SDL_INCLUDE_PATH <SDL2/SDL.h>
-      #define MONITOR_ZOOM 1
+      #define USE_FBDEV 1
+      #define USE_EVDEV 1
+      #define FBDEV_HOR_RES 1024
+      #define FBDEV_VER_RES 600
+      #define FBDEV_BUFFER_SIZE (FBDEV_HOR_RES * 80)
+      #define FBDEV_DEV "/dev/fb0"
+      #define EVDEV_NAME "/dev/input/event0"
+      #define DISP_SW_ROTATE 1
+      #define DISP_ROTATION LV_DISP_ROT_90
+      #define DISP_FULL_REFRESH 1
       #endif
       """
     ),
@@ -192,7 +206,7 @@ def write_cmakelists() -> None:
 
       # lv_drivers is used as a source directory only (no CMake from that repo).
       set(LV_DRIVERS_DIR "${CMAKE_CURRENT_LIST_DIR}/.deps/lv_drivers" CACHE PATH "Local LV drivers path")
-      if(NOT EXISTS "${LV_DRIVERS_DIR}/sdl/sdl.c")
+      if(NOT EXISTS "${LV_DRIVERS_DIR}/display/fbdev.c" OR NOT EXISTS "${LV_DRIVERS_DIR}/indev/evdev.c")
         message(FATAL_ERROR "lv_drivers not found at ${LV_DRIVERS_DIR}; please run main.py --build to prefetch.")
       endif()
 
@@ -213,8 +227,8 @@ def write_cmakelists() -> None:
       add_executable(lvgl_web
         main.c
         generated/ui_app.c
-        ${LV_DRIVERS_DIR}/sdl/sdl.c
-        ${LV_DRIVERS_DIR}/sdl/sdl_common.c
+        ${LV_DRIVERS_DIR}/display/fbdev.c
+        ${LV_DRIVERS_DIR}/indev/evdev.c
       )
 
       target_include_directories(lvgl_web PRIVATE
@@ -228,18 +242,12 @@ def write_cmakelists() -> None:
         LV_CONF_INCLUDE_SIMPLE
         LV_DRV_CONF_INCLUDE_SIMPLE
         LV_LVGL_H_INCLUDE_SIMPLE
-        SDL_MAIN_HANDLED
         LV_TICK_CUSTOM_INCLUDE="tick.h"
       )
 
-      find_package(PkgConfig REQUIRED)
-      pkg_check_modules(SDL2 REQUIRED sdl2)
-
       target_link_libraries(lvgl_web PRIVATE
         lvgl
-        ${SDL2_LIBRARIES}
       )
-      target_include_directories(lvgl_web PRIVATE ${SDL2_INCLUDE_DIRS})
       """
     ),
     encoding="utf-8",
@@ -299,7 +307,7 @@ def maybe_build() -> None:
   if platform.system().lower() != "linux":
     print("Build step skipped: not running on Linux.")
     return
-  required = ["cmake", "git", "pkg-config"]
+  required = ["cmake", "git"]
   missing = [cmd for cmd in required if shutil.which(cmd) is None]
   if missing:
     print(f"Build step skipped: missing tools {missing}")
@@ -332,9 +340,11 @@ def main() -> None:
       """
       #pragma once
       #include <stdint.h>
-      #include <SDL2/SDL.h>
+      #include <sys/time.h>
       static inline uint32_t lv_tick_custom_handler(void) {
-        return SDL_GetTicks();
+        struct timeval tv;
+        gettimeofday(&tv, NULL);
+        return (uint32_t)(tv.tv_sec * 1000u + (uint32_t)(tv.tv_usec / 1000u));
       }
       """
     ),
@@ -343,7 +353,7 @@ def main() -> None:
 
   if args.build:
     maybe_build()
-  print("LVGL sources generated under ./lvgl. Run main.py --build on Linux with SDL2 dev packages to compile.")
+  print("LVGL sources generated under ./lvgl. Run main.py --build on Linux to compile.")
 
 
 if __name__ == "__main__":
